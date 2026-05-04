@@ -58,3 +58,55 @@ git clone --depth 1 https://github.com/xptsp/luci-app-adguardhome.git package/cu
 # Optional default LAN IP change. Keep official default 192.168.1.1 by default.
 # To change it, uncomment and edit the line below.
 # sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
+
+# Set eth0 as default WAN port on first boot
+mkdir -p files/etc/uci-defaults
+
+cat > files/etc/uci-defaults/99-custom-network <<'EOF'
+#!/bin/sh
+
+WAN_PORT="eth0"
+LAN_PORTS="eth1"
+LAN_IP="192.168.1.1/24"
+
+# Remove existing br-lan device sections to avoid duplicate bridge definitions
+for s in $(uci -q show network | sed -n "s/^\(network\.[^=]*\)=device$/\1/p"); do
+    if [ "$(uci -q get ${s}.name)" = "br-lan" ]; then
+        uci -q delete "$s"
+    fi
+done
+
+# Recreate LAN bridge
+uci -q delete network.lan_dev
+uci set network.lan_dev='device'
+uci set network.lan_dev.name='br-lan'
+uci set network.lan_dev.type='bridge'
+
+for p in $LAN_PORTS; do
+    uci add_list network.lan_dev.ports="$p"
+done
+
+# LAN interface
+uci set network.lan='interface'
+uci set network.lan.device='br-lan'
+uci set network.lan.proto='static'
+uci -q delete network.lan.ipaddr
+uci add_list network.lan.ipaddr="$LAN_IP"
+uci set network.lan.ip6assign='60'
+
+# WAN interface on eth0
+uci set network.wan='interface'
+uci set network.wan.device="$WAN_PORT"
+uci set network.wan.proto='dhcp'
+
+# WAN6 interface on eth0
+uci set network.wan6='interface'
+uci set network.wan6.device="$WAN_PORT"
+uci set network.wan6.proto='dhcpv6'
+
+uci commit network
+
+exit 0
+EOF
+
+chmod +x files/etc/uci-defaults/99-custom-network
